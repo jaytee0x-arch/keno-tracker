@@ -2,7 +2,12 @@ name: Keno Auto-Scraper
 
 on:
   schedule:
-    - cron: '5,20,35,50 * * * *'
+    # 4 times daily during GVR operating hours (8am-11pm PST / UTC-8)
+    # 9am PST  = 17:00 UTC
+    # 1pm PST  = 21:00 UTC
+    # 5pm PST  = 01:00 UTC
+    # 10pm PST = 06:00 UTC
+    - cron: '0 17,21,1,6 * * *'
   workflow_dispatch:
 
 permissions:

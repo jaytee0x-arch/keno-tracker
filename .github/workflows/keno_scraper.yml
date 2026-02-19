@@ -1,0 +1,42 @@
+name: Keno Auto-Scraper
+
+on:
+  schedule:
+    # Runs 4 times per hour. The scraper itself adds a random 0-120s delay
+    # on top of this, so in practice the runs are spread across the hour.
+    - cron: '5,20,35,50 * * * *'
+  workflow_dispatch: # Lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Run the Keno scraper
+        run: python scraper.py
+
+      - name: Commit and push results
+        run: |
+          git config --global user.name "KenoBot"
+          git config --global user.email "kenobot@users.noreply.github.com"
+          git add results.csv
+          # The '|| true' means: if there's nothing new to commit, don't fail the job
+          git commit -m "Auto-update: $(date -u '+%Y-%m-%d %H:%M UTC')" || true
+          git push || true

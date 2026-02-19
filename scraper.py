@@ -54,10 +54,6 @@ def save_new_games(new_games: list, existing_ids: set):
 
 # ==============================================================================
 # CORE: Extract all game rows currently visible on the page
-# The page uses divs, not a table:
-#   div.game-num   → Game ID
-#   div.game-date  → Timestamp
-#   div.game-draw  → Numbers (space-separated)
 # ==============================================================================
 async def extract_visible_games(page) -> list:
     games = []
@@ -68,15 +64,12 @@ async def extract_visible_games(page) -> list:
 
         print(f"[Extract] Found {len(game_nums)} game-num, {len(game_dates)} game-date, {len(game_draws)} game-draw divs.")
 
-        # All three lists should be the same length
         count = min(len(game_nums), len(game_dates), len(game_draws))
 
         for i in range(count):
             game_id = (await game_nums[i].inner_text()).strip()
             timestamp = (await game_dates[i].inner_text()).strip()
             raw_numbers = (await game_draws[i].inner_text()).strip()
-
-            # Numbers are space-separated, convert to dash-separated
             numbers = "-".join(raw_numbers.split())
 
             if game_id.isdigit() and numbers:
@@ -94,47 +87,46 @@ async def extract_visible_games(page) -> list:
 
 
 # ==============================================================================
-# CORE: Click the back arrow to go to the previous page of games
+# CORE: Navigate back by clicking the lowest game ID link on the page.
+# Each page shows 10 games. The links are the game IDs themselves.
+# Clicking the lowest one reloads the page centered on that game,
+# revealing the 10 games before it.
 # ==============================================================================
 async def click_back_one_page(page) -> bool:
     try:
-        # Record first game ID so we can confirm the page changed
-        first_before = (await page.locator("div.game-num").first.inner_text()).strip()
-        print(f"[Nav] First Game ID before click: {first_before}")
+        # Get all game ID links on the page (they link to index.php?id=...)
+        links = await page.locator("a[href*='index.php?id=']").all()
 
-        selectors = [
-            "xpath=//a[img[contains(@src,'prev') or contains(@src,'back') or contains(@src,'left') or contains(@src,'arrow')]]",
-            "xpath=//a[contains(@href,'prev') or contains(@title,'prev') or contains(@title,'Previous')]",
-            "xpath=//img[contains(@src,'prev') or contains(@src,'back')]/parent::a",
-        ]
-
-        clicked = False
-        for selector in selectors:
-            try:
-                locator = page.locator(selector)
-                if await locator.count() > 0:
-                    await locator.first.click()
-                    clicked = True
-                    print(f"[Nav] Clicked back using: {selector}")
-                    break
-            except:
-                continue
-
-        if not clicked:
-            print("[Nav] Standard selectors failed. Printing all links for diagnosis...")
-            links = await page.locator("a").all()
-            for i, link in enumerate(links):
-                href = await link.get_attribute("href") or ""
-                text = (await link.inner_text()).strip()
-                print(f"  Link {i}: text='{text}' href='{href}'")
+        if not links:
+            print("[Nav] No game ID links found on page.")
             return False
 
-        # Wait for the first game-num to change
+        # Find the link with the lowest numeric game ID text
+        lowest_id = None
+        lowest_link = None
+        for link in links:
+            text = (await link.inner_text()).strip()
+            if text.isdigit():
+                val = int(text)
+                if lowest_id is None or val < lowest_id:
+                    lowest_id = val
+                    lowest_link = link
+
+        if lowest_link is None:
+            print("[Nav] Could not find a valid game ID link to click.")
+            return False
+
+        print(f"[Nav] Clicking lowest game ID link: {lowest_id}")
+        first_before = (await page.locator("div.game-num").first.inner_text()).strip()
+
+        await lowest_link.click()
+
+        # Wait for the page to reload with different games
         for _ in range(15):
             await asyncio.sleep(1)
             try:
                 first_after = (await page.locator("div.game-num").first.inner_text()).strip()
-                if first_after != first_before:
+                if first_after.strip() != first_before.strip():
                     print(f"[Nav] Page changed. First Game ID now: {first_after}")
                     return True
             except:

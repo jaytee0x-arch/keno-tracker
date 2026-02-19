@@ -10,8 +10,8 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 # ==============================================================================
 URL = "https://www.kenousa.com/games/GVR/Green/draws.php"
 CSV_FILE = "results.csv"
-TARGET_GAME_COUNT = 150
-MAX_NAV_ATTEMPTS = 20
+GAMES_PER_PAGE = 25
+PAGES_TO_COLLECT = 6        # 6 pages x 25 games = 150 games per run
 RANDOM_SLEEP_MAX = 120
 
 
@@ -54,87 +54,119 @@ def save_new_games(new_games: list, existing_ids: set):
 
 
 # ==============================================================================
-# CORE: Extract all game rows visible in the table
+# CORE: Set the dropdown to show 25 games per page
+# ==============================================================================
+async def set_dropdown_to_25(page) -> bool:
+    try:
+        dropdown = page.locator("select")
+        await dropdown.wait_for(state="attached", timeout=10000)
+        await dropdown.select_option("25")
+        print("[Setup] Dropdown set to 25 games per page.")
+        await asyncio.sleep(4)
+        return True
+    except Exception as e:
+        print(f"[Setup] Could not set dropdown: {e}")
+        return False
+
+
+# ==============================================================================
+# CORE: Extract all game rows currently visible in the table
+# Each row has: Game ID | Timestamp | number | number | number ... (20 numbers)
 # ==============================================================================
 async def extract_visible_games(page) -> list:
     games = []
     try:
-        rows = await page.locator("#draws tbody tr").all()
+        rows = await page.locator("table tr").all()
+        print(f"[Extract] Found {len(rows)} table rows.")
+
         for row in rows:
             cells = await row.locator("td").all()
-            if len(cells) < 3:
+
+            # We expect at least 22 cells: Game ID + Timestamp + 20 numbers
+            if len(cells) < 4:
                 continue
 
             game_id = (await cells[0].inner_text()).strip()
             timestamp = (await cells[1].inner_text()).strip()
 
-            balls = await cells[2].locator(".ball").all()
-            if balls:
-                ball_texts = [(await b.inner_text()).strip() for b in balls]
-                numbers = "-".join(t for t in ball_texts if t)
-            else:
-                numbers = (await cells[2].inner_text()).strip().replace("\n", "-").replace(" ", "-")
+            # Collect all remaining cells as numbers
+            number_parts = []
+            for cell in cells[2:]:
+                text = (await cell.inner_text()).strip()
+                if text.isdigit():
+                    number_parts.append(text)
 
-            if game_id.isdigit():
+            numbers = "-".join(number_parts)
+
+            if game_id.isdigit() and numbers:
                 games.append({
                     "Game ID": game_id,
                     "Timestamp": timestamp,
                     "Numbers": numbers,
                     "Scraped At": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
                 })
+
     except Exception as e:
-        print(f"[Extract] Error reading table rows: {e}")
+        print(f"[Extract] Error: {e}")
 
     return games
 
 
 # ==============================================================================
-# CORE: Click the "back" navigation button on the XpertX widget
+# CORE: Click the ◄ back arrow to go to the previous page of games
 # ==============================================================================
-async def click_back_button(page) -> bool:
-    selectors = [
-        "xpath=//span[contains(@class,'xpertx-icon-play-2')]/ancestor::a",
-        "xpath=//span[contains(@class,'xpertx-icon-prev')]/ancestor::a",
-        "xpath=//a[contains(@class,'prev')]",
-        "#draws_previous",
-        ".paginate_button.previous",
-    ]
+async def click_back_one_page(page) -> bool:
+    try:
+        # Record the first Game ID before clicking so we can confirm the page changed
+        first_before = (await page.locator("table tr td:first-child").first.inner_text()).strip()
+        print(f"[Nav] First Game ID before click: {first_before}")
 
-    for selector in selectors:
-        try:
-            locator = page.locator(selector)
-            count = await locator.count()
-            if count == 0:
+        # The back arrow ◄ is an image inside a link — we try several ways to find it
+        selectors = [
+            "xpath=//a[img[contains(@src,'prev') or contains(@src,'back') or contains(@src,'left') or contains(@src,'arrow')]]",
+            "xpath=//a[contains(@href,'prev') or contains(@title,'prev') or contains(@title,'Previous')]",
+            "xpath=//img[contains(@src,'prev') or contains(@src,'back')]/parent::a",
+        ]
+
+        clicked = False
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if await locator.count() > 0:
+                    await locator.first.click()
+                    clicked = True
+                    print(f"[Nav] Clicked back using: {selector}")
+                    break
+            except:
                 continue
 
-            class_attr = await locator.first.get_attribute("class") or ""
-            if "disabled" in class_attr:
-                print("[Nav] Back button is disabled. We have reached the oldest available data.")
-                return False
-
-            first_row_before = await page.locator("#draws tbody tr:first-child td:first-child").inner_text()
-
-            await locator.first.click()
-
-            for _ in range(15):
-                await asyncio.sleep(1)
-                try:
-                    first_row_after = await page.locator("#draws tbody tr:first-child td:first-child").inner_text()
-                    if first_row_after.strip() != first_row_before.strip():
-                        print(f"[Nav] Page changed. First game now: {first_row_after.strip()}")
-                        return True
-                except:
-                    pass
-
-            print("[Nav] Clicked back but table did not change.")
+        # Fallback: print all links on the page so we can see what's available
+        if not clicked:
+            print("[Nav] Standard selectors failed. Printing all links for diagnosis...")
+            links = await page.locator("a").all()
+            for i, link in enumerate(links):
+                href = await link.get_attribute("href") or ""
+                text = (await link.inner_text()).strip()
+                print(f"  Link {i}: text='{text}' href='{href}'")
             return False
 
-        except Exception as e:
-            print(f"[Nav] Selector '{selector}' failed: {e}")
-            continue
+        # Wait up to 15 seconds for the first Game ID to change
+        for _ in range(15):
+            await asyncio.sleep(1)
+            try:
+                first_after = (await page.locator("table tr td:first-child").first.inner_text()).strip()
+                if first_after != first_before:
+                    print(f"[Nav] Page changed successfully. First Game ID now: {first_after}")
+                    return True
+            except:
+                pass
 
-    print("[Nav] Could not find any working back button.")
-    return False
+        print("[Nav] Page did not change after clicking.")
+        return False
+
+    except Exception as e:
+        print(f"[Nav] Error: {e}")
+        return False
 
 
 # ==============================================================================
@@ -146,7 +178,7 @@ async def run_scraper():
     await asyncio.sleep(sleep_seconds)
 
     existing_ids = load_existing_ids()
-    print(f"[Start] Loaded {len(existing_ids)} existing game IDs from CSV.")
+    print(f"[Start] Loaded {len(existing_ids)} existing Game IDs from CSV.")
 
     all_collected = []
 
@@ -163,41 +195,28 @@ async def run_scraper():
             print(f"[Browser] Navigating to {URL}")
             await page.goto(URL, timeout=60000, wait_until="domcontentloaded")
             await asyncio.sleep(8)
-
-            # Take a screenshot so we can see what the browser sees
             await page.screenshot(path="screenshot.png", full_page=True)
-            print("[Debug] Screenshot saved as screenshot.png")
+            print("[Debug] Screenshot saved.")
 
-            # Try to expand the view to show more entries
-            try:
-                await page.wait_for_selector("select", state="attached", timeout=10000)
-                for value in ["100", "50", "25"]:
-                    try:
-                        await page.select_option("select", value)
-                        print(f"[Setup] Set table to show {value} entries.")
-                        await asyncio.sleep(3)
-                        break
-                    except:
-                        continue
-            except Exception as e:
-                print(f"[Setup] Could not change dropdown: {e}")
+            # Set dropdown to 25 games per page
+            await set_dropdown_to_25(page)
 
-            # Wait for the table to be populated
+            # Wait for table to be ready
             try:
-                await page.wait_for_selector("#draws tbody tr", timeout=20000)
+                await page.wait_for_selector("table tr", timeout=20000)
                 print("[Setup] Table is ready.")
             except PlaywrightTimeout:
-                print("[Error] Table never appeared. Check screenshot.png to see what the browser saw.")
+                print("[Error] Table never appeared. Check screenshot.png.")
                 return
 
-            # Main collection loop
             seen_ids_this_run = set()
 
-            for attempt in range(1, MAX_NAV_ATTEMPTS + 1):
-                print(f"\n[Loop] Navigation attempt {attempt}/{MAX_NAV_ATTEMPTS}")
+            # Collect PAGES_TO_COLLECT pages worth of data (6 x 25 = 150 games)
+            for page_num in range(1, PAGES_TO_COLLECT + 1):
+                print(f"\n[Loop] Scraping page {page_num} of {PAGES_TO_COLLECT}")
 
                 page_games = await extract_visible_games(page)
-                print(f"[Loop] Extracted {len(page_games)} games from current view.")
+                print(f"[Loop] Extracted {len(page_games)} games.")
 
                 new_this_page = 0
                 for game in page_games:
@@ -206,16 +225,15 @@ async def run_scraper():
                         all_collected.append(game)
                         new_this_page += 1
 
-                print(f"[Loop] {new_this_page} unique games added. Total so far: {len(all_collected)}")
+                print(f"[Loop] {new_this_page} new unique games. Running total: {len(all_collected)}")
 
-                if len(all_collected) >= TARGET_GAME_COUNT:
-                    print(f"[Loop] Reached target of {TARGET_GAME_COUNT} games. Stopping.")
-                    break
-
-                success = await click_back_button(page)
-                if not success:
-                    print("[Loop] Could not navigate further back. Ending collection.")
-                    break
+                # Don't click back after the last page
+                if page_num < PAGES_TO_COLLECT:
+                    success = await click_back_one_page(page)
+                    if not success:
+                        print("[Loop] Could not go back further. Stopping early.")
+                        break
+                    await asyncio.sleep(3)
 
         except Exception as e:
             print(f"[Fatal] Unexpected error: {e}")

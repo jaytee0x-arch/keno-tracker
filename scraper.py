@@ -87,14 +87,11 @@ async def extract_visible_games(page) -> list:
 
 
 # ==============================================================================
-# CORE: Navigate back by clicking the lowest game ID link on the page.
-# Each page shows 10 games. The links are the game IDs themselves.
-# Clicking the lowest one reloads the page centered on that game,
-# revealing the 10 games before it.
+# CORE: Navigate back by going directly to the URL of the lowest game ID link.
+# Clicking a link causes a full page reload so we navigate directly instead.
 # ==============================================================================
 async def click_back_one_page(page) -> bool:
     try:
-        # Get all game ID links on the page (they link to index.php?id=...)
         links = await page.locator("a[href*='index.php?id=']").all()
 
         if not links:
@@ -103,37 +100,37 @@ async def click_back_one_page(page) -> bool:
 
         # Find the link with the lowest numeric game ID text
         lowest_id = None
-        lowest_link = None
+        lowest_href = None
         for link in links:
             text = (await link.inner_text()).strip()
+            href = await link.get_attribute("href") or ""
             if text.isdigit():
                 val = int(text)
                 if lowest_id is None or val < lowest_id:
                     lowest_id = val
-                    lowest_link = link
+                    lowest_href = href
 
-        if lowest_link is None:
-            print("[Nav] Could not find a valid game ID link to click.")
+        if lowest_href is None:
+            print("[Nav] Could not find a valid game ID link.")
             return False
 
-        print(f"[Nav] Clicking lowest game ID link: {lowest_id}")
-        first_before = (await page.locator("div.game-num").first.inner_text()).strip()
+        # Build the full URL and navigate directly
+        base = URL.rsplit("/", 1)[0]
+        target_url = f"{base}/{lowest_href}"
+        print(f"[Nav] Navigating to older games via game ID {lowest_id}: {target_url}")
 
-        await lowest_link.click()
+        await page.goto(target_url, timeout=60000, wait_until="domcontentloaded")
+        await asyncio.sleep(5)
 
-        # Wait for the page to reload with different games
-        for _ in range(15):
-            await asyncio.sleep(1)
-            try:
-                first_after = (await page.locator("div.game-num").first.inner_text()).strip()
-                if first_after.strip() != first_before.strip():
-                    print(f"[Nav] Page changed. First Game ID now: {first_after}")
-                    return True
-            except:
-                pass
-
-        print("[Nav] Page did not change after clicking.")
-        return False
+        # Confirm the new page has game data
+        try:
+            await page.wait_for_selector("div.game-num", timeout=15000)
+            first_after = (await page.locator("div.game-num").first.inner_text()).strip()
+            print(f"[Nav] Page loaded successfully. First Game ID now: {first_after}")
+            return True
+        except PlaywrightTimeout:
+            print("[Nav] New page did not load game data in time.")
+            return False
 
     except Exception as e:
         print(f"[Nav] Error: {e}")

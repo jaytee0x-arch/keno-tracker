@@ -10,7 +10,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 # ==============================================================================
 URL = "https://www.kenousa.com/games/GVR/Green/draws.php"
 CSV_FILE = "results.csv"
-PAGES_TO_COLLECT = 15       # 15 pages x 10 games = 150 games per run
+PAGES_TO_COLLECT = 50       # 50 pages x 10 games = 500 games per run
 RANDOM_SLEEP_MAX = 120
 
 
@@ -112,7 +112,7 @@ async def click_back_10(page) -> bool:
             print("[Nav] Back button not found.")
             return False
 
-        # Check it's not disabled (means we've reached the oldest data)
+        # Check it's not disabled (means we've reached the oldest available data)
         cls = await back_button.get_attribute("class") or ""
         if "disabled" in cls:
             print("[Nav] Back button is disabled. Reached oldest available data.")

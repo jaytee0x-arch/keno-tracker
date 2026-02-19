@@ -2,10 +2,8 @@ name: Keno Auto-Scraper
 
 on:
   schedule:
-    # Runs 4 times per hour. The scraper itself adds a random 0-120s delay
-    # on top of this, so in practice the runs are spread across the hour.
     - cron: '5,20,35,50 * * * *'
-  workflow_dispatch: # Lets you trigger a run manually from the Actions tab
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -32,11 +30,17 @@ jobs:
       - name: Run the Keno scraper
         run: python scraper.py
 
+      - name: Show scraper output summary
+        run: |
+          echo "=== Checking for results.csv ==="
+          ls -lh results.csv 2>/dev/null || echo "results.csv was NOT created"
+          echo "=== Checking for screenshot ==="
+          ls -lh screenshot.png 2>/dev/null || echo "No screenshot found"
+
       - name: Commit and push results
         run: |
           git config --global user.name "KenoBot"
           git config --global user.email "kenobot@users.noreply.github.com"
-          git add results.csv
-          # The '|| true' means: if there's nothing new to commit, don't fail the job
+          git add results.csv screenshot.png || true
           git commit -m "Auto-update: $(date -u '+%Y-%m-%d %H:%M UTC')" || true
           git push || true

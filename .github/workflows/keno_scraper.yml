@@ -41,6 +41,7 @@ jobs:
         run: |
           git config --global user.name "KenoBot"
           git config --global user.email "kenobot@users.noreply.github.com"
-          git add results.csv screenshot.png || true
+          git add results.csv || true
+          git add screenshot.png || true
           git commit -m "Auto-update: $(date -u '+%Y-%m-%d %H:%M UTC')" || true
           git push || true

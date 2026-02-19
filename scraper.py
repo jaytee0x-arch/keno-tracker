@@ -53,30 +53,31 @@ def save_new_games(new_games: list, existing_ids: set):
 
 
 # ==============================================================================
-# CORE: Extract all game rows currently visible in the table
+# CORE: Extract all game rows currently visible on the page
+# The page uses divs, not a table:
+#   div.game-num   → Game ID
+#   div.game-date  → Timestamp
+#   div.game-draw  → Numbers (space-separated)
 # ==============================================================================
 async def extract_visible_games(page) -> list:
     games = []
     try:
-        rows = await page.locator("table tr").all()
-        print(f"[Extract] Found {len(rows)} table rows.")
+        game_nums = await page.locator("div.game-num").all()
+        game_dates = await page.locator("div.game-date").all()
+        game_draws = await page.locator("div.game-draw").all()
 
-        for row in rows:
-            cells = await row.locator("td").all()
+        print(f"[Extract] Found {len(game_nums)} game-num, {len(game_dates)} game-date, {len(game_draws)} game-draw divs.")
 
-            if len(cells) < 4:
-                continue
+        # All three lists should be the same length
+        count = min(len(game_nums), len(game_dates), len(game_draws))
 
-            game_id = (await cells[0].inner_text()).strip()
-            timestamp = (await cells[1].inner_text()).strip()
+        for i in range(count):
+            game_id = (await game_nums[i].inner_text()).strip()
+            timestamp = (await game_dates[i].inner_text()).strip()
+            raw_numbers = (await game_draws[i].inner_text()).strip()
 
-            number_parts = []
-            for cell in cells[2:]:
-                text = (await cell.inner_text()).strip()
-                if text.isdigit():
-                    number_parts.append(text)
-
-            numbers = "-".join(number_parts)
+            # Numbers are space-separated, convert to dash-separated
+            numbers = "-".join(raw_numbers.split())
 
             if game_id.isdigit() and numbers:
                 games.append({
@@ -97,7 +98,8 @@ async def extract_visible_games(page) -> list:
 # ==============================================================================
 async def click_back_one_page(page) -> bool:
     try:
-        first_before = (await page.locator("table tr td:first-child").first.inner_text()).strip()
+        # Record first game ID so we can confirm the page changed
+        first_before = (await page.locator("div.game-num").first.inner_text()).strip()
         print(f"[Nav] First Game ID before click: {first_before}")
 
         selectors = [
@@ -127,10 +129,11 @@ async def click_back_one_page(page) -> bool:
                 print(f"  Link {i}: text='{text}' href='{href}'")
             return False
 
+        # Wait for the first game-num to change
         for _ in range(15):
             await asyncio.sleep(1)
             try:
-                first_after = (await page.locator("table tr td:first-child").first.inner_text()).strip()
+                first_after = (await page.locator("div.game-num").first.inner_text()).strip()
                 if first_after != first_before:
                     print(f"[Nav] Page changed. First Game ID now: {first_after}")
                     return True
@@ -170,16 +173,16 @@ async def run_scraper():
         try:
             print(f"[Browser] Navigating to {URL}")
             await page.goto(URL, timeout=60000, wait_until="domcontentloaded")
-            await asyncio.sleep(8)
+            await asyncio.sleep(10)
             await page.screenshot(path="screenshot.png", full_page=True)
             print("[Debug] Screenshot saved.")
 
-            # Wait for table to be ready
+            # Wait for game divs to appear
             try:
-                await page.wait_for_selector("table tr", timeout=20000)
-                print("[Setup] Table is ready.")
+                await page.wait_for_selector("div.game-num", timeout=20000)
+                print("[Setup] Game divs are ready.")
             except PlaywrightTimeout:
-                print("[Error] Table never appeared. Check screenshot.png.")
+                print("[Error] Game divs never appeared. Check screenshot.png.")
                 return
 
             seen_ids_this_run = set()

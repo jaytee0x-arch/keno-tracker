@@ -3,10 +3,10 @@ name: Keno Auto-Scraper
 on:
   schedule:
     # 4 times daily during GVR operating hours (8am-11pm PST / UTC-8)
-    # 9am PST  = 17:00 UTC
-    # 1pm PST  = 21:00 UTC
-    # 5pm PST  = 01:00 UTC
-    # 10pm PST = 06:00 UTC
+    # 9am PST  = 17:23 UTC
+    # 1pm PST  = 21:23 UTC
+    # 5pm PST  = 01:23 UTC
+    # 10pm PST = 06:23 UTC
     - cron: '23 17,21,1,6 * * *'
   workflow_dispatch:
 
@@ -35,12 +35,19 @@ jobs:
       - name: Run the Keno scraper
         run: python scraper.py
 
-      - name: Show scraper output summary
+      - name: Run the Bias Analyzer
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: python analyzer.py
+
+      - name: Show output summary
         run: |
           echo "=== Checking for results.csv ==="
           ls -lh results.csv 2>/dev/null || echo "results.csv was NOT created"
-          echo "=== Checking for screenshot ==="
-          ls -lh screenshot.png 2>/dev/null || echo "No screenshot found"
+          echo "=== Row count ==="
+          wc -l results.csv 2>/dev/null || echo "No file to count"
 
       - name: Commit and push results
         run: |

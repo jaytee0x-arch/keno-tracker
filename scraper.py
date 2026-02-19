@@ -44,7 +44,10 @@ def save_new_games(new_games: list, existing_ids: set):
         print("[Save] All collected games already exist in the CSV.")
         return 0
 
+    # Sort numerically, not alphabetically
+    df_new["Game ID"] = df_new["Game ID"].astype(int)
     df_new = df_new.sort_values("Game ID", ascending=True)
+    df_new["Game ID"] = df_new["Game ID"].astype(str)
 
     file_exists = os.path.exists(CSV_FILE)
     df_new.to_csv(CSV_FILE, mode="a", header=not file_exists, index=False)
@@ -87,29 +90,38 @@ async def extract_visible_games(page) -> list:
 
 
 # ==============================================================================
-# CORE: Click the "10" back button (goes back 10 game IDs).
-# The button is a <button class="game-change"> with text "10".
-# There are two "10" buttons — the first one (not disabled) goes back,
-# the second one (disabled when on current page) goes forward.
+# CORE: Click the back "10" button.
+# Button order is always fixed:
+#   index 0 = oldest
+#   index 1 = 100-back
+#   index 2 = 10-back  <-- this is what we want
+#   index 3 = 10-forward
+#   index 4 = 100-forward
+#   index 5 = current
 # ==============================================================================
 async def click_back_10(page) -> bool:
     try:
-        # Record the first game ID before clicking so we can confirm the update
         first_before = (await page.locator("div.game-num").first.inner_text()).strip()
         print(f"[Nav] First Game ID before click: {first_before}")
 
-        # Find the first non-disabled "10" game-change button
-        back_button = page.locator("button.game-change:not(.disabled)").filter(has_text="10").first
+        # Always target the back "10" button by fixed position (index 2)
+        back_button = page.locator("button.game-change").nth(2)
 
         count = await back_button.count()
         if count == 0:
-            print("[Nav] Back button not found or is disabled. Reached oldest available data.")
+            print("[Nav] Back button not found.")
+            return False
+
+        # Check it's not disabled (means we've reached the oldest data)
+        cls = await back_button.get_attribute("class") or ""
+        if "disabled" in cls:
+            print("[Nav] Back button is disabled. Reached oldest available data.")
             return False
 
         await back_button.click()
         print("[Nav] Clicked '10' back button. Waiting for data to update...")
 
-        # Wait for the game divs to update with new data
+        # Wait for the game divs to update
         for _ in range(15):
             await asyncio.sleep(1)
             try:
@@ -157,7 +169,6 @@ async def run_scraper():
             await page.screenshot(path="screenshot.png", full_page=True)
             print("[Debug] Screenshot saved.")
 
-            # Wait for game divs to appear
             try:
                 await page.wait_for_selector("div.game-num", timeout=20000)
                 print("[Setup] Game divs are ready.")

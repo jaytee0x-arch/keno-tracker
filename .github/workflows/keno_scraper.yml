@@ -1,6 +1,6 @@
 name: Keno Auto-Scraper
 
-on:
+off:
   schedule:
     # 4 times daily during GVR operating hours (8am-11pm PST / UTC-8)
     # 9am PST  = 17:23 UTC
